@@ -1,0 +1,50 @@
+
+./Setup.hs,15
+main main1,2
+
+./src/Main.hs,1275
+module Main Main0,1
+data Result Result7,8
+data Result a = Done Done7,8
+data Result a = Done a | Partial Partial7,8
+data Result a = Done a | Partial a String | Fail Fail7,8
+newtype Parser Parser9,10
+newtype Parser a = Parser Parser9,10
+newtype Parser a = Parser { runParser runParser9,10
+instance instance11,12
+parse parse17,18
+parse parse18,19
+joinWith joinWith22,23
+joinWith joinWith23,24
+inject inject31,32
+inject inject32,33
+character character34,35
+character character35,36
+tag tag40,41
+tag tag41,42
+chars chars45,46
+chars chars46,47
+chars1 chars150,51
+chars1 chars151,52
+rest rest53,54
+rest rest54,55
+orTry orTry56,57
+orTry orTry57,58
+orTry' orTry'66,67
+orTry' orTry'67,68
+data Format Format75,76
+data Format = Bold Bold75,76
+data Format = Bold | Italic Italic75,76
+data Format = Bold | Italic | Strikethrough Strikethrough75,76
+data Format = Bold | Italic | Strikethrough | Code Code75,76
+data FormattedText FormattedText76,77
+data FormattedText = Header Header76,77
+data FormattedText = Header Int String | Text Text76,77
+header header79,80
+header header80,81
+markdown markdown83,84
+markdown markdown84,85
+example example86,87
+example example87,88
+main main90,91
+main main91,92
