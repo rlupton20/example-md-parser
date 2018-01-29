@@ -1,6 +1,7 @@
 module Main where
 
 import Data.List (foldl')
+import System.IO (readFile)
 
 -- Conceptually a parser is a value of type String -> Maybe a,
 -- but we want to consume strings incrementally, and combine results
@@ -24,6 +25,13 @@ parse p s = case runParser p $ s of
   Partial a [] -> Just a
   _ -> Nothing
 
+-- This parser always fails
+failure :: Parser a
+failure = Parser $ const Fail
+
+eof :: Parser ()
+eof = Parser $ \s -> if s == "" then Partial () "" else Fail
+
 -- If we can parse an a, and then parse a b, and have a way
 -- of combining a's and b's, we ought to be able to build a new
 -- parser which can parse our a and b, then provide us with a c
@@ -36,6 +44,16 @@ joinWith f p q = Parser $ \s ->
       Partial y u -> Partial (f x y) u
       Fail -> Fail
     _ -> Fail
+
+-- This is the more flexible version of joinWith - I only
+-- really wrote this because I know applicative functors...
+app :: Parser (a -> b) -> Parser a -> Parser b
+app p q = Parser $ \s ->
+  case runParser p $ s of
+    Partial f t -> case runParser q $ t of
+      Partial x u -> Partial (f x) u
+      Fail -> Fail
+    Fail -> Fail
 
 -- inject consumes no input, and returns a value
 inject :: a -> Parser a
@@ -123,10 +141,10 @@ isNext c = Parser $ \s ->
     c':_ -> Partial (c == c') s
 
 -- Take a parser, parse, but don't consume
-peek :: Parser a -> Parser (Maybe a)
+peek :: Parser a -> Parser a
 peek p = Parser $ \s -> case runParser p $ s of
-  Partial x _ -> Partial (Just x) s
-  Fail -> Partial Nothing s
+  Partial x _ -> Partial x s
+  Fail -> Fail
 
 -- Markdown types
 data FormattedText = Section Int String [FormattedText] | Text String deriving (Eq, Show)
@@ -143,9 +161,23 @@ line = joinWith const
 header' :: Int -> Parser FormattedText
 header' n = joinWith (Section n) 
   (bind (tag headerTag) $ \_ -> line)
-  (takeUntil (header' n) (fmap Text line))
+  (takeUntil (headerSat (<=n)) (markdown' n))
   where
     headerTag = replicate n '#' ++ " "
+
+headerTag :: Parser Int
+headerTag = fmap length $
+  joinWith (:) (character '#') (takeUntil (character ' ') (character '#'))
+
+-- headerSat matches headers whose depth satisfies the passed predicate
+headerSat :: (Int -> Bool) -> Parser FormattedText
+headerSat t = bind (peek headerTag) (\n -> if t n then header' n else failure)
+
+markdown' :: Int -> Parser FormattedText
+markdown' n = headerSat (n<) `orTry'` (fmap Text line)
+
+markdown :: Parser [FormattedText]
+markdown = takeUntil eof (markdown' 0)
 
 
 example :: String
@@ -163,4 +195,10 @@ main = do
   print $ runParser line "This is a line\nFoo"
   print $ runParser (header' 1) "# Title"
   print $ runParser (header' 1) example
+  print $ runParser headerTag "### "
+  print $ runParser headerTag ""
+  print $ runParser (headerSat (<=3)) "### foo"
+  print $ runParser (headerSat (<=3)) "#### foo"
+  print $ runParser markdown example
+  fmap (runParser markdown) (readFile "file.md") >>= print
 
