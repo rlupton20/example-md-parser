@@ -27,6 +27,8 @@ parse p s = case runParser p $ s of
 -- If we can parse an a, and then parse a b, and have a way
 -- of combining a's and b's, we ought to be able to build a new
 -- parser which can parse our a and b, then provide us with a c
+--
+-- Really, we ought to use an Applicative instance
 joinWith :: (a -> b -> c) -> Parser a -> Parser b -> Parser c
 joinWith f p q = Parser $ \s ->
   case runParser p $ s of
@@ -44,6 +46,12 @@ character :: Char -> Parser Char
 character c = Parser $ \s -> case s of
   "" -> Fail
   c':s' -> if c == c' then Partial c s' else Fail
+
+anyChar :: Parser Char
+anyChar = Parser $ \s ->
+  case s of
+    "" -> Fail
+    c:s' -> Partial c s'
 
 -- tag parses a matching string of characters out of a String
 -- TODO make this efficient (the current implementation is crap)
@@ -83,21 +91,65 @@ orTry' p q = fmap merge $ orTry p q
     merge (Left x) = x
     merge (Right y) = y
 
+-- Make a decision about what parser to run next based on the
+-- result of the previous parse.
+--
+-- Did anyone mention Monads?
+bind :: Parser a -> (a -> Parser b) -> Parser b
+bind p f = Parser $ \s ->
+  case runParser p $ s of
+    Partial x s' -> runParser (f x) s'
+    Fail -> Fail
+
+-- Consumes the input with a parser until end of input, or match
+-- on a different parser
+takeUntil :: Parser a -> Parser b -> Parser [b]
+takeUntil p q = fmap reverse $ Parser $ \s -> go [] s
+  where
+    go acc s
+      | s == "" = Partial acc ""
+      | otherwise =
+          case runParser p $ s of
+            Partial _ _ -> Partial acc s
+            Fail -> case runParser q $ s of
+              Fail -> Fail
+              Partial x s' -> go (x:acc) s'
+
+-- Look for a character to match next, but don't consume anything
+isNext :: Char -> Parser Bool
+isNext c = Parser $ \s ->
+  case s of
+    "" -> Partial False ""
+    c':_ -> Partial (c == c') s
+
+-- Take a parser, parse, but don't consume
+peek :: Parser a -> Parser (Maybe a)
+peek p = Parser $ \s -> case runParser p $ s of
+  Partial x _ -> Partial (Just x) s
+  Fail -> Partial Nothing s
 
 -- Markdown types
-data Format = Bold | Italic | Strikethrough | Code deriving (Eq, Show)
-data FormattedText = Header Int String | Text [Format] String deriving (Eq, Show)
+data FormattedText = Section Int String [FormattedText] | Text String deriving (Eq, Show)
 
--- Parse a header line
-header :: Parser FormattedText
-header = let removeSpaces = dropWhile (==' ') in
-  joinWith Header (fmap length $ chars1 '#') (fmap removeSpaces rest)
+-- Consumes a line and bins the newline at the end
+line :: Parser String
+line = joinWith const
+  (takeUntil (character '\n') anyChar)
+  (bind (isNext '\n') $ \b -> if b then character '\n' else phony)
+  where
+    phony = inject '\n'
 
-markdown :: Parser FormattedText
-markdown = header `orTry'` (fmap (Text []) rest)
+-- Parser for a header of given depth
+header' :: Int -> Parser FormattedText
+header' n = joinWith (Section n) 
+  (bind (tag headerTag) $ \_ -> line)
+  (takeUntil (header' n) (fmap Text line))
+  where
+    headerTag = replicate n '#' ++ " "
+
 
 example :: String
-example = "# This is a title\nSome text that introduces a section\n##Subsection\nBlah"
+example = "# This is a title\nSome text that introduces a section\n## Subsection\nBlah\n# Another title\nFoo"
 
 
 main :: IO ()
@@ -108,6 +160,7 @@ main = do
   print $ parse (tag "foo") "foobar"
   print $ parse (tag "foo") "oof"
   print $ runParser (chars '#') "#### Header"
-  print $ runParser header "#### Header"
-  print $ runParser header "Header"
-  print . map (parse markdown) $ lines example
+  print $ runParser line "This is a line\nFoo"
+  print $ runParser (header' 1) "# Title"
+  print $ runParser (header' 1) example
+
