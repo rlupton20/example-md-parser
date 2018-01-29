@@ -29,6 +29,8 @@ parse p s = case runParser p $ s of
 failure :: Parser a
 failure = Parser $ const Fail
 
+-- This parser fails only when there is still data left on
+-- the stream
 eof :: Parser ()
 eof = Parser $ \s -> if s == "" then Partial () "" else Fail
 
@@ -47,6 +49,10 @@ joinWith f p q = Parser $ \s ->
 
 -- This is the more flexible version of joinWith - I only
 -- really wrote this because I know applicative functors...
+--
+-- I avoid using this below, because I don't think it's an
+-- obvious primitive to form when just learning Haskell
+-- This is <*> for an Applicative.
 app :: Parser (a -> b) -> Parser a -> Parser b
 app p q = Parser $ \s ->
   case runParser p $ s of
@@ -55,16 +61,18 @@ app p q = Parser $ \s ->
       Fail -> Fail
     Fail -> Fail
 
--- inject consumes no input, and returns a value
+-- inject consumes no input, and returns a value. Otherwise
+-- known as pure (Applicative) or return (Monad)
 inject :: a -> Parser a
 inject x = Parser $ \s -> Partial x s
 
--- character parses out a single character from a string
+-- character matches a single character from a string
 character :: Char -> Parser Char
 character c = Parser $ \s -> case s of
   "" -> Fail
   c':s' -> if c == c' then Partial c s' else Fail
 
+-- Matches any character
 anyChar :: Parser Char
 anyChar = Parser $ \s ->
   case s of
@@ -77,33 +85,20 @@ tag :: String -> Parser String
 tag =  let eatchars = joinWith $ flip (:) in
          fmap reverse . foldl' eatchars (inject "") . map character
 
--- Consume as many matching characters as possible
-chars :: Char -> Parser String
-chars c = Parser $ \s ->
-  let (cs,ss) = (takeWhile (==c) s, dropWhile (==c) s) in
-    Partial cs ss
-
--- Consumes as many matching characters as possible, but at least 1
-chars1 :: Char -> Parser String
-chars1 c = joinWith (:) (character c) (chars c)
-
--- rest matches the rest of the input
-rest :: Parser String
-rest = Parser $ \s -> Partial s ""
-
 -- try one parser, and if that fails, try another
-orTry :: Parser a -> Parser b -> Parser (Either a b)
-orTry p q = Parser $ \s ->
+orTry' :: Parser a -> Parser b -> Parser (Either a b)
+orTry' p q = Parser $ \s ->
   case runParser p $ s of
     Partial x s' -> Partial (Left x) s'
     Fail -> case runParser q $ s of
       Partial y s' -> Partial (Right y) s'
       Fail -> Fail
 
--- like orTry, but for when both parsers provide the same type
--- and we have no reason to keep them distinguished
-orTry' :: Parser a -> Parser a -> Parser a
-orTry' p q = fmap merge $ orTry p q
+-- like orTry', but for when both parsers provide the same type
+-- and we have no reason to keep them distinguished. I use this one
+-- more here, so I give it the nicer name
+orTry :: Parser a -> Parser a -> Parser a
+orTry p q = fmap merge $ orTry' p q
   where
     merge :: Either a a -> a
     merge (Left x) = x
@@ -112,7 +107,7 @@ orTry' p q = fmap merge $ orTry p q
 -- Make a decision about what parser to run next based on the
 -- result of the previous parse.
 --
--- Did anyone mention Monads?
+-- Did anyone mention Monads (this is (>>=))?
 bind :: Parser a -> (a -> Parser b) -> Parser b
 bind p f = Parser $ \s ->
   case runParser p $ s of
@@ -121,6 +116,8 @@ bind p f = Parser $ \s ->
 
 -- Consumes the input with a parser until end of input, or match
 -- on a different parser
+--
+-- TODO Try and remove the reverse
 takeUntil :: Parser a -> Parser b -> Parser [b]
 takeUntil p q = fmap reverse $ Parser $ \s -> go [] s
   where
@@ -133,14 +130,7 @@ takeUntil p q = fmap reverse $ Parser $ \s -> go [] s
               Fail -> Fail
               Partial x s' -> go (x:acc) s'
 
--- Look for a character to match next, but don't consume anything
-isNext :: Char -> Parser Bool
-isNext c = Parser $ \s ->
-  case s of
-    "" -> Partial False ""
-    c':_ -> Partial (c == c') s
-
--- Take a parser, parse, but don't consume
+-- Take a parser, parse, but don't consume the stream
 peek :: Parser a -> Parser a
 peek p = Parser $ \s -> case runParser p $ s of
   Partial x _ -> Partial x s
@@ -149,32 +139,31 @@ peek p = Parser $ \s -> case runParser p $ s of
 -- Markdown types
 data FormattedText = Section Int String [FormattedText] | Text String deriving (Eq, Show)
 
--- Consumes a line and bins the newline at the end
+-- Consumes a line and bins the newline at the end if it exists.
 line :: Parser String
-line = joinWith const
-  (takeUntil (character '\n') anyChar)
-  (bind (isNext '\n') $ \b -> if b then character '\n' else phony)
-  where
-    phony = inject '\n'
+line = let newline = character '\n' in
+  joinWith const (takeUntil newline anyChar) newline
+  `orTry` takeUntil failure anyChar
 
 -- Parser for a header of given depth
 header' :: Int -> Parser FormattedText
 header' n = joinWith (Section n) 
-  (bind (tag headerTag) $ \_ -> line)
+  (bind headerTag $ \_ -> line)
   (takeUntil (headerSat (<=n)) (markdown' n))
   where
-    headerTag = replicate n '#' ++ " "
-
-headerTag :: Parser Int
-headerTag = fmap length $
-  joinWith (:) (character '#') (takeUntil (character ' ') (character '#'))
+    headerTag = tag $ replicate n '#' ++ " "
 
 -- headerSat matches headers whose depth satisfies the passed predicate
 headerSat :: (Int -> Bool) -> Parser FormattedText
-headerSat t = bind (peek headerTag) (\n -> if t n then header' n else failure)
+headerSat t = bind (peek headerLength) (\n -> if t n then header' n else failure)
+  where
+    -- headerLength looks ahead to see the length of the header coming up
+    headerLength :: Parser Int
+    headerLength = fmap length $
+      joinWith (:) (character '#') (takeUntil (character ' ') (character '#'))
 
 markdown' :: Int -> Parser FormattedText
-markdown' n = headerSat (n<) `orTry'` (fmap Text line)
+markdown' n = headerSat (n<) `orTry` (fmap Text line)
 
 markdown :: Parser [FormattedText]
 markdown = takeUntil eof (markdown' 0)
@@ -191,14 +180,12 @@ main = do
   print $ parse (tag "foo") "foo"
   print $ parse (tag "foo") "foobar"
   print $ parse (tag "foo") "oof"
-  print $ runParser (chars '#') "#### Header"
   print $ runParser line "This is a line\nFoo"
   print $ runParser (header' 1) "# Title"
   print $ runParser (header' 1) example
-  print $ runParser headerTag "### "
-  print $ runParser headerTag ""
   print $ runParser (headerSat (<=3)) "### foo"
   print $ runParser (headerSat (<=3)) "#### foo"
   print $ runParser markdown example
-  fmap (runParser markdown) (readFile "file.md") >>= print
+  putStrLn "\nParsing file.md...\n"
+  fmap (parse markdown) (readFile "file.md") >>= print
 
