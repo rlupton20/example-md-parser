@@ -5,26 +5,24 @@ import Data.List (foldl')
 -- Conceptually a parser is a value of type String -> Maybe a,
 -- but we want to consume strings incrementally, and combine results
 -- as we go
-data Result a = Done a | Partial a String | Fail deriving (Eq, Show)
+data Result a = Partial a String | Fail deriving (Eq, Show)
 
 newtype Parser a = Parser { runParser :: String -> Result a }
 
 instance Functor Parser where
   fmap f p = Parser $ \s -> case runParser p $ s of
-    Done x -> Done $ f x
     Partial x s -> Partial (f x) s
     Fail -> Fail
 
 parse :: Parser a -> String -> Maybe a
 parse p s = case runParser p $ s of
-  Done a -> Just a
+  Partial a [] -> Just a
   _ -> Nothing
 
 joinWith :: (a -> b -> c) -> Parser a -> Parser b -> Parser c
 joinWith f p q = Parser $ \s ->
   case runParser p $ s of
     Partial x t -> case runParser q $ t of
-      Done y -> Done $ f x y
       Partial y u -> Partial (f x y) u
       Fail -> Fail
     _ -> Fail
@@ -34,7 +32,6 @@ inject x = Parser $ \s -> Partial x s
 
 character :: Char -> Parser Char
 character c = Parser $ \s -> case s of
-  [c'] -> if c == c' then Done c else Fail
   c':s' -> if c == c' then Partial c s' else Fail
   _ -> Fail
 
@@ -44,23 +41,22 @@ tag =  let eatchars = joinWith $ flip (:) in
 
 -- Consume as many matching characters as possible
 chars :: Char -> Parser String
-chars c = Parser $ \s -> let (cs,ss) = (takeWhile (==c) s, dropWhile (==c) s) in
-  if length ss == 0 then Done cs else Partial cs ss
+chars c = Parser $ \s ->
+  let (cs,ss) = (takeWhile (==c) s, dropWhile (==c) s) in
+    Partial cs ss
 
 -- Consumes as many matching characters as possible, but at least 1
 chars1 :: Char -> Parser String
 chars1 c = joinWith (:) (character c) (chars c)
 
 rest :: Parser String
-rest = Parser Done
+rest = Parser $ \s -> Partial s ""
 
 orTry :: Parser a -> Parser b -> Parser (Either a b)
 orTry p q = Parser $ \s ->
   case runParser p $ s of
-    Done x -> Done $ Left x
     Partial x s' -> Partial (Left x) s'
     Fail -> case runParser q $ s of
-      Done y -> Done $ Right y
       Partial y s' -> Partial (Right y) s'
       Fail -> Fail
 
@@ -98,4 +94,4 @@ main = do
   print $ runParser (chars '#') "#### Header"
   print $ runParser header "#### Header"
   print $ runParser header "Header"
-  print . map (runParser markdown) $ lines example
+  print . map (parse markdown) $ lines example
