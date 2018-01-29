@@ -2,48 +2,48 @@
 ./Setup.hs,15
 main main1,2
 
-./src/Main.hs,1226
+./src/Main.hs,1234
 module Main Main0,1
 data Result Result7,8
 data Result a = Partial Partial7,8
 data Result a = Partial a String | Fail Fail7,8
-newtype Parser Parser9,10
-newtype Parser a = Parser Parser9,10
-newtype Parser a = Parser { runParser runParser9,10
-instance instance11,12
-parse parse16,17
-parse parse17,18
-joinWith joinWith21,22
-joinWith joinWith22,23
-inject inject29,30
-inject inject30,31
-character character32,33
-character character33,34
-tag tag37,38
-tag tag38,39
-chars chars42,43
-chars chars43,44
-chars1 chars148,49
-chars1 chars149,50
-rest rest51,52
-rest rest52,53
-orTry orTry54,55
-orTry orTry55,56
-orTry' orTry'62,63
-orTry' orTry'63,64
-data Format Format71,72
-data Format = Bold Bold71,72
-data Format = Bold | Italic Italic71,72
-data Format = Bold | Italic | Strikethrough Strikethrough71,72
-data Format = Bold | Italic | Strikethrough | Code Code71,72
-data FormattedText FormattedText72,73
-data FormattedText = Header Header72,73
-data FormattedText = Header Int String | Text Text72,73
-header header75,76
-header header76,77
-markdown markdown79,80
-markdown markdown80,81
-example example82,83
-example example83,84
-main main86,87
-main main87,88
+newtype Parser Parser11,12
+newtype Parser a = Parser Parser11,12
+newtype Parser a = Parser { runParser runParser11,12
+instance instance14,15
+parse parse21,22
+parse parse22,23
+joinWith joinWith29,30
+joinWith joinWith30,31
+inject inject38,39
+inject inject39,40
+character character42,43
+character character43,44
+tag tag49,50
+tag tag50,51
+chars chars54,55
+chars chars55,56
+chars1 chars160,61
+chars1 chars161,62
+rest rest64,65
+rest rest65,66
+orTry orTry68,69
+orTry orTry69,70
+orTry' orTry'78,79
+orTry' orTry'79,80
+data Format Format87,88
+data Format = Bold Bold87,88
+data Format = Bold | Italic Italic87,88
+data Format = Bold | Italic | Strikethrough Strikethrough87,88
+data Format = Bold | Italic | Strikethrough | Code Code87,88
+data FormattedText FormattedText88,89
+data FormattedText = Header Header88,89
+data FormattedText = Header Int String | Text Text88,89
+header header91,92
+header header92,93
+markdown markdown95,96
+markdown markdown96,97
+example example98,99
+example example99,100
+main main102,103
+main main103,104
