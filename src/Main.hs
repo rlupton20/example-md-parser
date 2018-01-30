@@ -136,19 +136,30 @@ peek p = Parser $ \s -> case runParser p $ s of
   Partial x _ -> Partial x s
   Fail -> Fail
 
+-- Parse with the first argument, then parse with the second
+-- argument, but forget the result of the first parse; this is
+-- (*>) from Applicative
+forgettingLeft :: Parser a -> Parser b -> Parser b
+forgettingLeft p q = bind p (const q)
+
+-- As forgettingLeft, but forgets the result of the second parse;
+-- this is (<*) from Applicative
+forgettingRight :: Parser a -> Parser b -> Parser a
+forgettingRight = joinWith const
+
 -- Markdown types
 data FormattedText = Section Int String [FormattedText] | Text String deriving (Eq, Show)
 
 -- Consumes a line and bins the newline at the end if it exists.
 line :: Parser String
 line = let newline = character '\n' in
-  joinWith const (takeUntil newline anyChar) newline
+  (takeUntil newline anyChar `forgettingRight` newline)
   `orTry` takeUntil failure anyChar
 
 -- Parser for a header of given depth
 header' :: Int -> Parser FormattedText
 header' n = joinWith (Section n) 
-  (bind headerTag $ \_ -> line)
+  (headerTag `forgettingLeft` line)
   (takeUntil (headerSat (<=n)) (markdown' n))
   where
     headerTag = tag $ replicate n '#' ++ " "
@@ -168,10 +179,8 @@ markdown' n = headerSat (n<) `orTry` (fmap Text line)
 markdown :: Parser [FormattedText]
 markdown = takeUntil eof (markdown' 0)
 
-
 example :: String
 example = "# This is a title\nSome text that introduces a section\n## Subsection\nBlah\n# Another title\nFoo"
-
 
 main :: IO ()
 main = do
