@@ -8,6 +8,11 @@ import System.IO (readFile)
 -- as we go
 data Result a = Partial a String | Fail deriving (Eq, Show)
 
+-- Result has an obvious Functor instance
+instance Functor Result where
+  fmap f (Partial x s) = Partial (f x) s
+  fmap _ Fail = Fail
+
 -- A parser takes a string and returns a decision about how the parse
 -- is going
 newtype Parser a = Parser { runParser :: String -> Result a }
@@ -17,6 +22,24 @@ instance Functor Parser where
   fmap f p = Parser $ \s -> case runParser p $ s of
     Partial x s -> Partial (f x) s
     Fail -> Fail
+
+-- Parsers also have an applicative instance
+instance Applicative Parser where
+  pure v = Parser $ \s -> Partial v s
+  af <*> av = Parser $ \s ->
+    case runParser af s of
+      Fail -> Fail
+      Partial f s -> fmap f $ runParser av s
+
+-- Parsers can be sequenced, with subsequent parsers using the values
+-- of previous parses - we get a Monad instance
+instance Monad Parser where
+  return = pure
+  ma >>= f = Parser $ \s ->
+    case runParser ma s of
+      Fail -> Fail
+      Partial x s -> runParser (f x) s
+
 
 -- A parse is successful if and only if we parsed something
 -- and have no input left to consume
@@ -34,38 +57,6 @@ failure = Parser $ const Fail
 eof :: Parser ()
 eof = Parser $ \s -> if s == "" then Partial () "" else Fail
 
--- If we can parse an a, and then parse a b, and have a way
--- of combining a's and b's, we ought to be able to build a new
--- parser which can parse our a and b, then provide us with a c
---
--- Really, we ought to use an Applicative instance
-joinWith :: (a -> b -> c) -> Parser a -> Parser b -> Parser c
-joinWith f p q = Parser $ \s ->
-  case runParser p $ s of
-    Partial x t -> case runParser q $ t of
-      Partial y u -> Partial (f x y) u
-      Fail -> Fail
-    _ -> Fail
-
--- This is the more flexible version of joinWith - I only
--- really wrote this because I know applicative functors...
---
--- I avoid using this below, because I don't think it's an
--- obvious primitive to form when just learning Haskell
--- This is <*> for an Applicative.
-app :: Parser (a -> b) -> Parser a -> Parser b
-app p q = Parser $ \s ->
-  case runParser p $ s of
-    Partial f t -> case runParser q $ t of
-      Partial x u -> Partial (f x) u
-      Fail -> Fail
-    Fail -> Fail
-
--- inject consumes no input, and returns a value. Otherwise
--- known as pure (Applicative) or return (Monad)
-inject :: a -> Parser a
-inject x = Parser $ \s -> Partial x s
-
 -- character matches a single character from a string
 character :: Char -> Parser Char
 character c = Parser $ \s -> case s of
@@ -80,10 +71,12 @@ anyChar = Parser $ \s ->
     c:s' -> Partial c s'
 
 -- tag parses a matching string of characters out of a String
--- TODO make this efficient (the current implementation is crap)
 tag :: String -> Parser String
-tag =  let eatchars = joinWith $ flip (:) in
-         fmap reverse . foldl' eatchars (inject "") . map character
+tag v = Parser $ \s -> go v s
+  where
+    go [] s = Partial v s
+    go _ [] = Fail
+    go (c:cs) (d:ds) = if c == d then go cs ds else Fail
 
 -- try one parser, and if that fails, try another
 orTry' :: Parser a -> Parser b -> Parser (Either a b)
@@ -103,16 +96,6 @@ orTry p q = fmap merge $ orTry' p q
     merge :: Either a a -> a
     merge (Left x) = x
     merge (Right y) = y
-
--- Make a decision about what parser to run next based on the
--- result of the previous parse.
---
--- Did anyone mention Monads (this is (>>=))?
-bind :: Parser a -> (a -> Parser b) -> Parser b
-bind p f = Parser $ \s ->
-  case runParser p $ s of
-    Partial x s' -> runParser (f x) s'
-    Fail -> Fail
 
 -- Consumes the input with a parser until end of input, or match
 -- on a different parser
@@ -136,48 +119,43 @@ peek p = Parser $ \s -> case runParser p $ s of
   Partial x _ -> Partial x s
   Fail -> Fail
 
--- Parse with the first argument, then parse with the second
--- argument, but forget the result of the first parse; this is
--- (*>) from Applicative
-forgettingLeft :: Parser a -> Parser b -> Parser b
-forgettingLeft p q = bind p (const q)
-
--- As forgettingLeft, but forgets the result of the second parse;
--- this is (<*) from Applicative
-forgettingRight :: Parser a -> Parser b -> Parser a
-forgettingRight = joinWith const
-
 -- Markdown types
 data FormattedText = Section Int String [FormattedText] | Text String deriving (Eq, Show)
 
 -- Consumes a line and bins the newline at the end if it exists.
 line :: Parser String
-line = let newline = character '\n' in
-  (takeUntil newline anyChar `forgettingRight` newline)
-  `orTry` takeUntil failure anyChar
+line = untilNewline `orTry` takeUntil failure anyChar
+  where
+    newline = character '\n'
+    untilNewline = takeUntil newline anyChar <* newline
 
 -- Parser for a section of given depth.
 section :: Int -> Parser FormattedText
-section n = joinWith (Section n)
-  (headerTag `forgettingLeft` line)
-  (takeUntil (parseSectionIfDepthSat (<=n)) (markdown' n))
+section n = Section n <$> headerTitle <*> subsections
   where
     headerTag = tag $ replicate n '#' ++ " "
+    headerTitle = headerTag *> line
+    subsections = takeUntil (parseSectionIfDepthSat (<=n)) $ markdown' n
 
 -- parseSectionIfDepthSat matches headers whose depth satisfies the passed predicate
 parseSectionIfDepthSat :: (Int -> Bool) -> Parser FormattedText
-parseSectionIfDepthSat t = bind (peek headerLength) (\n -> if t n then section n else failure)
+parseSectionIfDepthSat p = do
+  l <- peek headerLength
+  if p l then section l else failure
   where
     -- headerLength looks ahead to see the length of the header coming up
     headerLength :: Parser Int
-    headerLength = fmap length $
-      joinWith (:) (character '#') (takeUntil (character ' ') (character '#'))
+    headerLength = do
+      _ <- character '#'
+      tail <- takeUntil (character ' ') (character '#')
+      let l = length tail + 1  -- + 1 for the character we consumed at the start
+      return l
 
 markdown' :: Int -> Parser FormattedText
-markdown' n = parseSectionIfDepthSat (n<) `orTry` (fmap Text line)
+markdown' n = parseSectionIfDepthSat (n<) `orTry` fmap Text line
 
 markdown :: Parser [FormattedText]
-markdown = takeUntil eof (markdown' 0)
+markdown = takeUntil eof $ markdown' 0
 
 example :: String
 example = "# This is a title\nSome text that introduces a section\n## Subsection\nBlah\n# Another title\nFoo"
