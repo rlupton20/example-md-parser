@@ -156,17 +156,17 @@ line = let newline = character '\n' in
   (takeUntil newline anyChar `forgettingRight` newline)
   `orTry` takeUntil failure anyChar
 
--- Parser for a header of given depth
-header' :: Int -> Parser FormattedText
-header' n = joinWith (Section n) 
+-- Parser for a section of given depth.
+section :: Int -> Parser FormattedText
+section n = joinWith (Section n)
   (headerTag `forgettingLeft` line)
-  (takeUntil (headerSat (<=n)) (markdown' n))
+  (takeUntil (parseSectionIfDepthSat (<=n)) (markdown' n))
   where
     headerTag = tag $ replicate n '#' ++ " "
 
--- headerSat matches headers whose depth satisfies the passed predicate
-headerSat :: (Int -> Bool) -> Parser FormattedText
-headerSat t = bind (peek headerLength) (\n -> if t n then header' n else failure)
+-- parseSectionIfDepthSat matches headers whose depth satisfies the passed predicate
+parseSectionIfDepthSat :: (Int -> Bool) -> Parser FormattedText
+parseSectionIfDepthSat t = bind (peek headerLength) (\n -> if t n then section n else failure)
   where
     -- headerLength looks ahead to see the length of the header coming up
     headerLength :: Parser Int
@@ -174,7 +174,7 @@ headerSat t = bind (peek headerLength) (\n -> if t n then header' n else failure
       joinWith (:) (character '#') (takeUntil (character ' ') (character '#'))
 
 markdown' :: Int -> Parser FormattedText
-markdown' n = headerSat (n<) `orTry` (fmap Text line)
+markdown' n = parseSectionIfDepthSat (n<) `orTry` (fmap Text line)
 
 markdown :: Parser [FormattedText]
 markdown = takeUntil eof (markdown' 0)
@@ -190,10 +190,10 @@ main = do
   print $ parse (tag "foo") "foobar"
   print $ parse (tag "foo") "oof"
   print $ runParser line "This is a line\nFoo"
-  print $ runParser (header' 1) "# Title"
-  print $ runParser (header' 1) example
-  print $ runParser (headerSat (<=3)) "### foo"
-  print $ runParser (headerSat (<=3)) "#### foo"
+  print $ runParser (section 1) "# Title"
+  print $ runParser (section 1) example
+  print $ runParser (parseSectionIfDepthSat (<=3)) "### foo"
+  print $ runParser (parseSectionIfDepthSat (<=3)) "#### foo"
   print $ runParser markdown example
   putStrLn "\nParsing file.md...\n"
   fmap (parse markdown) (readFile "file.md") >>= print
